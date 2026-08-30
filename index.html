@@ -320,6 +320,35 @@
     <button class="btn btn-copy" onclick="copiar(1)" id="btnCopy1" disabled>📋 Copiar resultado 1</button>
   </div>
 
+  <!-- ESCRIBIR DIRECTO EN EL CALENDARIO (via API del Mac por Tailscale) -->
+  <div class="card" id="card-aplicar">
+    <div class="card-title"><span>📆</span> Escribir en el calendario</div>
+    <div class="field-group">
+      <label>Mes</label>
+      <select id="ap-mes"></select>
+    </div>
+    <div class="field-group">
+      <label>Día</label>
+      <input type="number" id="ap-dia" min="1" max="31" placeholder="Ej: 13">
+    </div>
+    <div class="field-group">
+      <label>Turno</label>
+      <select id="ap-turno">
+        <option value="">— elegir —</option>
+        <option value="DA">Día adultos</option>
+        <option value="DP">Día pediatría</option>
+        <option value="NA">Noche adultos</option>
+        <option value="NP">Noche pediatría</option>
+        <option value="HL">Horario de lactancia</option>
+      </select>
+    </div>
+    <button class="link-btn" onclick="deducirTurno()">🔍 Deducir el turno buscando al titular</button>
+    <button class="btn" onclick="verCelda()">👁 Ver qué hay ahora</button>
+    <button class="btn" onclick="aplicarEnCalendario()" id="btnAplicar">✍️ Escribir</button>
+    <div class="result-destino" id="ap-estado"></div>
+    <button class="link-btn" onclick="configurarApi()">Configurar conexión con el Mac</button>
+  </div>
+
   <!-- VISTA PREVIA DE LA NOTA -->
   <div class="card hidden" id="card-preview">
     <div class="card-title"><span>🗒</span> Así quedará la celda</div>
@@ -689,6 +718,126 @@ document.getElementById('med-nuevo').addEventListener('keydown', function(e) {
 
 pintarMedicos();
 onCausa();
+
+/* ── Escribir en el calendario ───────────────────────────────────────────────
+   Habla con la API que corre en el Mac, alcanzable solo desde tus dispositivos
+   de Tailscale. El token se guarda en este telefono, no viaja a ningun sitio
+   mas. Los datos del formulario ya estan; aqui solo falta decir que celda.     */
+
+var API_DEF = 'https://macbook-air-de-marcelo.tail055de8.ts.net/urgencias';
+
+function apiCfg() {
+  return { url: localStorage.getItem('apiUrl') || API_DEF,
+           token: localStorage.getItem('apiToken') || '' };
+}
+
+function configurarApi() {
+  var c = apiCfg();
+  var t = prompt('Token de la API (esta en el Mac, en ~/.config/urgencias/token.txt):', c.token);
+  if (t === null) return;
+  localStorage.setItem('apiToken', t.trim());
+  var u = prompt('Direccion de la API:', c.url);
+  if (u !== null && u.trim()) localStorage.setItem('apiUrl', u.trim().replace(/\/+$/, ''));
+  estado('Configuracion guardada.', false);
+}
+
+function estado(msg, error) {
+  var el = document.getElementById('ap-estado');
+  el.textContent = msg;
+  el.style.color = error ? '#c62828' : '';
+}
+
+function llamarApi(herramienta, args, alTerminar) {
+  var c = apiCfg();
+  if (!c.token) { estado('Falta el token. Use "Configurar conexion".', true); return; }
+  estado('Conectando con el Mac...', false);
+  fetch(c.url + '/' + herramienta, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Token': c.token },
+    body: JSON.stringify(args)
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (d) {
+    if (d.ok) alTerminar(d.resultado);
+    else estado(d.error || 'La operacion fallo.', true);
+  })
+  .catch(function (e) {
+    estado('Sin conexion con el Mac. Revise que Tailscale este activo. (' + e.message + ')', true);
+  });
+}
+
+function celdaElegida() {
+  var mes = document.getElementById('ap-mes').value;
+  var dia = document.getElementById('ap-dia').value;
+  var turno = document.getElementById('ap-turno').value;
+  if (!mes || !dia || !turno) { estado('Indique mes, dia y turno.', true); return null; }
+  return { mes: mes, dia: parseInt(dia, 10), turno: turno };
+}
+
+/* Con mes, dia y el apellido del titular basta: el Mac busca en que turno
+   aparece y rellena la lista. Evita tener que recordar si era DA, NA, DP... */
+function deducirTurno() {
+  var mes = document.getElementById('ap-mes').value;
+  var dia = document.getElementById('ap-dia').value;
+  var titular = document.getElementById('medB').value ||
+                document.getElementById('medA').value;
+  if (!mes || !dia) { estado('Indique mes y dia.', true); return; }
+  if (!titular) { estado('Falta el apellido del medico titular.', true); return; }
+
+  llamarApi('buscar_medico', { mes: mes, dia: parseInt(dia, 10), medico: titular },
+    function (r) {
+      var codigos = (r.match(/^(DA|DP|NA|NP|HL):/gm) || [])
+                      .map(function (s) { return s.replace(':', ''); });
+      if (codigos.length === 1) {
+        document.getElementById('ap-turno').value = codigos[0];
+        estado('Turno ' + codigos[0] + ' — ' + r, false);
+      } else if (codigos.length > 1) {
+        estado('Aparece en varios turnos, elija uno:\n' + r, false);
+      } else {
+        estado(r, true);
+      }
+    });
+}
+
+function verCelda() {
+  var c = celdaElegida();
+  if (c) llamarApi('ver_turno', c, function (r) { estado(r, false); });
+}
+
+function aplicarEnCalendario() {
+  var c = celdaElegida();
+  if (!c) return;
+  if (!resultado1) { estado('Primero presione Generar.', true); return; }
+
+  var causa = document.getElementById('causa').value;
+  var args = {
+    causa: causa, mes: c.mes, dia: c.dia, turno: c.turno,
+    a: document.getElementById('medA').value,
+    b: document.getElementById('medB').value,
+    nota: normalizar(document.getElementById('nota').value || ''),
+    motivo: document.getElementById('motivo').value,
+    fecha: document.getElementById('fecharef').value,
+    f1: document.getElementById('fecha1').value,
+    f2: document.getElementById('fecha2').value,
+    h1: document.getElementById('horario1').value,
+    h2: document.getElementById('horario2').value
+  };
+
+  if (!confirm('Se escribira en ' + c.mes + ' ' + c.dia + ' (' + c.turno + '):\n\n'
+               + resultado1 + '\n\nContinuar?')) return;
+
+  document.getElementById('btnAplicar').disabled = true;
+  llamarApi('aplicar_turno', args, function (r) {
+    estado(r, false);
+    document.getElementById('btnAplicar').disabled = false;
+  });
+}
+
+(function iniciarAplicar() {
+  var sel = document.getElementById('ap-mes');
+  sel.innerHTML = '<option value="">— elegir —</option>' +
+    MESES_NOM.map(function (m) { return '<option value="' + m + '">' + m + '</option>'; }).join('');
+})();
 </script>
 </body>
 </html>
