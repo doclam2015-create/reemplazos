@@ -601,6 +601,8 @@ function generar() {
   document.getElementById('dest1').textContent = d1;
   document.getElementById('dest1').className = d1 ? 'result-destino' : 'result-destino hidden';
 
+  autocompletarCelda();
+
   document.getElementById('card-res2').className = r2 ? 'result-card' : 'result-card hidden';
   document.getElementById('res2').textContent = r2;
   document.getElementById('dest2').textContent = d2;
@@ -774,9 +776,32 @@ function celdaElegida() {
   return { mes: mes, dia: parseInt(dia, 10), turno: turno };
 }
 
+/* La fecha ya la escribiste arriba: no hay que repetirla. De ahi salen el mes y
+   el dia, y el turno se deduce buscando al titular. Solo las causas sin campo de
+   fecha (vacante, renuncia, nota) siguen pidiendolos a mano. */
+function autocompletarCelda() {
+  var causa = document.getElementById('causa').value;
+  var iso = '';
+  if (causa === 'C') iso = document.getElementById('fecha1').value;
+  else if (['FL', 'LM', 'FM', 'PSG'].indexOf(causa) >= 0)
+    iso = document.getElementById('fecharef').value;
+
+  if (!iso) {
+    estado('Indique mes, dia y turno de la celda a modificar.', false);
+    return;
+  }
+  var p = iso.split('-');
+  document.getElementById('ap-mes').value = MESES_NOM[parseInt(p[1], 10) - 1];
+  document.getElementById('ap-dia').value = parseInt(p[2], 10);
+  document.getElementById('ap-turno').value = '';
+
+  if (apiCfg().token) deducirTurno();
+  else estado('Falta el turno. Use "Configurar conexion" para deducirlo solo.', false);
+}
+
 /* Con mes, dia y el apellido del titular basta: el Mac busca en que turno
    aparece y rellena la lista. Evita tener que recordar si era DA, NA, DP... */
-function deducirTurno() {
+function deducirTurno(despues) {
   var mes = document.getElementById('ap-mes').value;
   var dia = document.getElementById('ap-dia').value;
   var titular = document.getElementById('medB').value ||
@@ -788,9 +813,17 @@ function deducirTurno() {
     function (r) {
       var codigos = (r.match(/^(DA|DP|NA|NP|HL):/gm) || [])
                       .map(function (s) { return s.replace(':', ''); });
+      // En un cambio de turno el horario de la celda 1 ya esta indicado arriba:
+      // sirve para descartar el turno contrario si el medico aparece en los dos.
+      if (document.getElementById('causa').value === 'C' && codigos.length > 1) {
+        var h1 = document.getElementById('horario1').value;
+        var filtrados = codigos.filter(function (c) { return c.charAt(0) === h1; });
+        if (filtrados.length === 1) codigos = filtrados;
+      }
       if (codigos.length === 1) {
         document.getElementById('ap-turno').value = codigos[0];
         estado('Turno ' + codigos[0] + ' — ' + r, false);
+        if (typeof despues === 'function') despues();   // seguir con lo que se pidio
       } else if (codigos.length > 1) {
         estado('Aparece en varios turnos, elija uno:\n' + r, false);
       } else {
@@ -799,15 +832,37 @@ function deducirTurno() {
     });
 }
 
+/* Rellena el formulario si aun no se genero, y deduce el turno si falta.
+   Devuelve true cuando ya hay todo para operar; si no, deja un mensaje o
+   encadena la deduccion del turno y vuelve luego. */
+function listoParaEscribir(reintento) {
+  if (!resultado1) generar();          // rellena tambien mes/dia/turno
+  if (!resultado1) return false;       // faltan datos arriba: generar() ya aviso
+
+  var turno = document.getElementById('ap-turno').value;
+  var mes = document.getElementById('ap-mes').value;
+  var dia = document.getElementById('ap-dia').value;
+  if (!turno && mes && dia) {
+    if (!apiCfg().token) {
+      estado('Falta el token: use "Configurar conexion" o elija el turno a mano.', true);
+      return false;
+    }
+    deducirTurno(reintento);           // asincrono: continua al volver
+    return false;
+  }
+  return true;
+}
+
 function verCelda() {
+  if (!listoParaEscribir(verCelda)) return;
   var c = celdaElegida();
   if (c) llamarApi('ver_turno', c, function (r) { estado(r, false); });
 }
 
 function aplicarEnCalendario() {
+  if (!listoParaEscribir(aplicarEnCalendario)) return;
   var c = celdaElegida();
   if (!c) return;
-  if (!resultado1) { estado('Primero presione Generar.', true); return; }
 
   var causa = document.getElementById('causa').value;
   var args = {
