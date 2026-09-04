@@ -196,6 +196,11 @@
     font-size:11px; text-decoration:underline; cursor:pointer; padding:0;
     margin-top:12px; letter-spacing:.3px;
   }
+.ejemplo { display:block; width:100%; text-align:left; margin:0 0 6px; padding:9px 11px;
+  font: inherit; font-size:13px; line-height:1.45; cursor:pointer;
+  background:rgba(127,127,127,.09); border:1px solid rgba(127,127,127,.22);
+  border-radius:8px; color:inherit; }
+.ejemplo:active { background:rgba(127,127,127,.2); }
 </style>
 </head>
 <body data-theme="light">
@@ -209,6 +214,29 @@
 </div>
 
 <div class="container">
+
+  <!-- FRASE -->
+  <div class="card">
+    <div class="card-title"><span>⚡</span> Escríbalo tal cual</div>
+    <textarea id="frase" rows="2" placeholder="Ej: machado cubre licencia de polanco 3/5 da"
+              style="width:100%;box-sizing:border-box;"></textarea>
+    <div class="regla" style="display:block;margin:6px 0 10px;">Una instrucción por vez.</div>
+    <button class="btn" onclick="fraseYEscribir()" id="btnFrase">✍️ Interpretar y escribir</button>
+    <div class="result-destino hidden" id="frase-estado"></div>
+    <details style="margin-top:10px;">
+      <summary style="cursor:pointer;font-size:13px;opacity:.75;">Ver un ejemplo de cada motivo — toque uno para usarlo</summary>
+      <div style="margin-top:8px;">
+        <button type="button" class="ejemplo" onclick="usarEjemplo(this)">machado cubre licencia de polanco 3/5 da</button>
+        <button type="button" class="ejemplo" onclick="usarEjemplo(this)">suarez cubre feriado legal de navarro el 20/04 na</button>
+        <button type="button" class="ejemplo" onclick="usarEjemplo(this)">cambio pastas con navarro 11/05 y 20/05 diurno nocturno</button>
+        <button type="button" class="ejemplo" onclick="usarEjemplo(this)">rivera reemplaza el fuero maternal de nieves 8/7 dp</button>
+        <button type="button" class="ejemplo" onclick="usarEjemplo(this)">haag cubre el permiso sin goce de tinte 2/2 np</button>
+        <button type="button" class="ejemplo" onclick="usarEjemplo(this)">vacante 3/5 da por licencia de polanco</button>
+        <button type="button" class="ejemplo" onclick="usarEjemplo(this)">campos cubre 12/6 np, renuncio ramirez</button>
+        <button type="button" class="ejemplo" onclick="usarEjemplo(this)">nota pastas 17/3 da: se paga a pastas, cambia por necesidades del servicio</button>
+      </div>
+    </details>
+  </div>
 
   <!-- CAUSA -->
   <div class="card">
@@ -322,7 +350,9 @@
 
   <!-- ESCRIBIR DIRECTO EN EL CALENDARIO (via API del Mac por Tailscale) -->
   <div class="card" id="card-aplicar">
-    <div class="card-title"><span>📆</span> Escribir en el calendario</div>
+    <div class="card-title"><span>📆</span> Celda del calendario</div>
+    <div class="regla" style="display:block;margin-bottom:12px;">Se rellena sola con la frase de
+      arriba. Sólo toque estos campos si quiere corregir la celda a mano.</div>
     <div class="field-group">
       <label>Mes</label>
       <select id="ap-mes"></select>
@@ -345,6 +375,7 @@
     <button class="link-btn" onclick="deducirTurno()">🔍 Deducir el turno buscando al titular</button>
     <button class="btn" onclick="verCelda()">👁 Ver qué hay ahora</button>
     <button class="btn" onclick="aplicarEnCalendario()" id="btnAplicar">✍️ Escribir</button>
+    <button class="btn" onclick="deshacerUltimo()" id="btnDeshacer">↩️ Deshacer lo último</button>
     <div class="result-destino" id="ap-estado"></div>
     <button class="link-btn" onclick="configurarApi()">Configurar conexión con el Mac</button>
   </div>
@@ -885,6 +916,264 @@ function aplicarEnCalendario() {
   llamarApi('aplicar_turno', args, function (r) {
     estado(r, false);
     document.getElementById('btnAplicar').disabled = false;
+  });
+}
+
+/* ===PARSER-INICIO=== */
+/* Interpreta una frase escrita a mano y la convierte en los campos del
+   formulario. Sin IA: son reglas fijas, por eso responde al instante y
+   siempre igual. La palabra clave decide el motivo, las fechas se reconocen
+   por su formato y los apellidos se cotejan con la lista de medicos. */
+
+var P_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+               'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+/* Palabras del oficio que NO son apellidos. Sirven para avisar de un nombre
+   que no reconocemos en lugar de escribir algo equivocado en la planilla. */
+var P_RELLENO = ('por para con del que los las una unos unas ella ella este esta ese esa '
+  + 'dias turno turnos jornada jornadas cubre cubrir cubrira cubriendo reemplaza reemplazar '
+  + 'reemplazo hace hacer hara toma tomar tomara sale entra tiene tendra esta estan medico '
+  + 'medica medicos doctor doctora legal maternal goce permiso remuneraciones sin cobertura '
+  + 'cambio cambia cambiar cambien permuta permutan feriado feriados licencia licencias fuero '
+  + 'lactancia vacante vacantes renuncio renuncia renuncias nota notas diurno diurna diurnos '
+  + 'nocturno nocturna nocturnos noche noches ambos ambas mismo misma dice queda quedara '
+  + P_MESES.join(' ')).split(' ');
+
+function sinTildes(s) {
+  return (s || '').toLowerCase()
+    .replace(/[áàäâ]/g, 'a').replace(/[éèëê]/g, 'e')
+    .replace(/[íìïî]/g, 'i').replace(/[óòöô]/g, 'o')
+    .replace(/[úùüû]/g, 'u').replace(/ñ/g, 'n');
+}
+
+function pMotivo(t) {
+  if (/feriado|\bfl\b/.test(t)) return 'FL';
+  if (/licencia|\blm\b/.test(t)) return 'LM';
+  if (/fuero|lactancia|\bfm\b/.test(t)) return 'FM';
+  if (/sin goce|\bpsg\b/.test(t)) return 'PSG';
+  return null;
+}
+
+function pCausa(t) {
+  if (/\brenunci/.test(t)) return 'VR';        /* antes que vacante */
+  if (/\bvacante/.test(t)) return 'VAC';
+  if (/\bnota\b/.test(t)) return 'N';
+  if (/\bcambi|\bpermut/.test(t)) return 'C';
+  return pMotivo(t);
+}
+
+function pIso(d, m, a) {
+  if (d < 1 || d > 31 || m < 1 || m > 12) return null;
+  return a + '-' + (m < 10 ? '0' : '') + m + '-' + (d < 10 ? '0' : '') + d;
+}
+
+/* Reconoce "11/05", "11-5", "11/05/2026" y "20 de abril", en el orden en que
+   aparecen escritas: para un cambio de turno el orden es lo que distingue la
+   celda que se modifica de la reciproca. */
+function pFechas(t, anio) {
+  var out = [], m;
+  var re = /\b(\d{1,2})\s*[\/\-]\s*(\d{1,2})(?:\s*[\/\-]\s*(\d{2,4}))?\b|\b(\d{1,2})\s+de\s+([a-z]+)\b/g;
+  while ((m = re.exec(t))) {
+    var iso = null;
+    if (m[1]) {
+      var a = m[3] ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : anio;
+      iso = pIso(+m[1], +m[2], a);
+    } else {
+      var mi = P_MESES.indexOf(m[5]);
+      if (mi >= 0) iso = pIso(+m[4], mi + 1, anio);
+    }
+    if (iso) out.push(iso);
+  }
+  return out;
+}
+
+function pMedicos(t, medicos) {
+  var hall = [];
+  for (var i = 0; i < medicos.length; i++) {
+    var n = sinTildes(medicos[i]).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var m = new RegExp('\\b' + n + '\\b').exec(t);
+    if (m) hall.push({ i: m.index, nom: medicos[i] });
+  }
+  hall.sort(function (a, b) { return a.i - b.i; });
+  return hall.map(function (h) { return h.nom; });
+}
+
+function pJornadas(t) {
+  var out = [], m;
+  var re = /\b(diurn\w*|nocturn\w*|noche\w*)\b/g;
+  while ((m = re.exec(t))) out.push(m[1].charAt(0) === 'd' ? 'D' : 'N');
+  return out;
+}
+
+/* Cualquier palabra larga que no sea del oficio ni un apellido conocido se
+   avisa: casi siempre es un apellido mal escrito o que falta en la lista. */
+function pDesconocidas(t, reconocidos) {
+  var vistos = sinTildes(reconocidos.join(' ')).split(/[^a-z]+/);
+  var out = [];
+  sinTildes(t).split(/[^a-z]+/).forEach(function (w) {
+    if (w.length < 4) return;
+    if (P_RELLENO.indexOf(w) >= 0 || vistos.indexOf(w) >= 0) return;
+    if (out.indexOf(w) < 0) out.push(w);
+  });
+  return out;
+}
+
+function interpretarFrase(texto, medicos, hoy) {
+  var lineas = (texto || '').split('\n').filter(function (l) { return l.trim(); });
+  if (lineas.length > 1) {
+    return { error: 'Escriba una sola instruccion por vez. Reconoci ' + lineas.length
+                    + ' lineas; haga la primera, y luego la siguiente.' };
+  }
+  var t = sinTildes(texto).replace(/\s+/g, ' ').trim();
+  if (!t) return { error: 'Escriba la frase.' };
+
+  var anio = (hoy || new Date()).getFullYear();
+  var causa = pCausa(t);
+  if (!causa) return { error: 'No reconozco el motivo. Empiece con una palabra clave: '
+                              + 'cambio, feriado, licencia, fuero, sin goce, vacante, renuncio o nota.' };
+
+  var r = { causa: causa, a: '', b: '', motivo: '', f1: '', f2: '', h1: 'D', h2: 'D',
+            fechaRef: '', nota: '', mes: '', dia: '', turno: '', avisos: [] };
+
+  /* En una nota, el texto libre va tras los dos puntos y no debe confundirse
+     con los datos: los apellidos que aparezcan ahi no son parte del reemplazo. */
+  var cuerpo = t;
+  if (causa === 'N') {
+    var c = texto.indexOf(':');
+    if (c < 0) return { error: 'Para una nota escriba los dos puntos, '
+                               + 'ej: "nota PASTAS 17/3 da: se paga a pastas".' };
+    r.nota = texto.slice(c + 1).trim();
+    cuerpo = sinTildes(texto.slice(0, c)).replace(/\s+/g, ' ').trim();
+  }
+
+  var meds = pMedicos(cuerpo, medicos);
+  var raras = pDesconocidas(cuerpo, meds);
+  /* Cuando falta un apellido, lo util no es decir "falta", sino cual no supimos
+     leer: casi siempre es una errata o un medico que no esta en la lista. */
+  var pista = raras.length ? ' No reconoci "' + raras.join('", "') + '".' : '';
+  var fechas = pFechas(cuerpo, anio);
+  var mt = /\b(da|dp|na|np|hl)\b/.exec(cuerpo);
+  if (mt) r.turno = mt[1].toUpperCase();
+
+  if (causa === 'C') {
+    if (meds.length < 2) return { error: 'Un cambio necesita dos apellidos. Reconoci: '
+                                         + (meds.join(', ') || 'ninguno') + '.' + pista };
+    if (fechas.length < 2) return { error: 'Un cambio necesita dos fechas, ej: 11/05 y 20/05.' };
+    r.a = meds[0]; r.b = meds[1];
+    r.f1 = fechas[0]; r.f2 = fechas[1];
+    var j = pJornadas(cuerpo);
+    if (j.length >= 2) { r.h1 = j[0]; r.h2 = j[1]; }
+    else if (j.length === 1) {
+      r.h1 = r.h2 = j[0];
+      r.avisos.push('Supuse que las dos jornadas son ' + (j[0] === 'D' ? 'diurnas' : 'nocturnas') + '.');
+    } else if (r.turno) {
+      r.h1 = r.h2 = r.turno.charAt(0) === 'N' ? 'N' : 'D';
+    } else {
+      r.avisos.push('No indico la jornada; supuse diurna en las dos.');
+    }
+  } else if (['FL', 'LM', 'FM', 'PSG'].indexOf(causa) >= 0) {
+    if (meds.length < 2) return { error: causa + ' necesita dos apellidos: quien reemplaza y el '
+                                         + 'titular, en ese orden. Reconoci: '
+                                         + (meds.join(', ') || 'ninguno') + '.' + pista };
+    if (!fechas.length) return { error: 'Falta la fecha, ej: 20/04.' };
+    r.a = meds[0]; r.b = meds[1]; r.fechaRef = fechas[0];
+  } else if (causa === 'VAC') {
+    r.motivo = pMotivo(t) || '';
+    if (!r.motivo) return { error: 'Diga por que queda vacante: feriado, licencia, fuero o sin goce.' };
+    if (!meds.length) return { error: 'Falta el apellido del medico que origino la vacante.' + pista };
+    if (!fechas.length) return { error: 'Falta la fecha, ej: 3/5.' };
+    r.b = meds[0];
+  } else if (causa === 'VR') {
+    if (!meds.length) return { error: 'Falta el apellido del medico que renuncio.' + pista };
+    if (!fechas.length) return { error: 'Falta la fecha.' };
+    if (meds.length >= 2) { r.a = meds[0]; r.b = meds[1]; }
+    else {
+      r.b = meds[0];
+      r.avisos.push('Nadie cubre el turno: quedara solo "(VR) ' + meds[0] + '".');
+    }
+  } else if (causa === 'N') {
+    if (!meds.length) return { error: 'Falta el apellido del medico que hara el turno.' + pista };
+    if (!fechas.length) return { error: 'Falta la fecha.' };
+    if (!r.nota) return { error: 'La nota quedo vacia despues de los dos puntos.' };
+    r.a = meds[0];
+  }
+
+  /* La celda que se modifica es siempre la de la primera fecha. */
+  var celda = r.f1 || r.fechaRef || fechas[0] || '';
+  if (celda) {
+    var p = celda.split('-');
+    r.mes = MESES_NOM[parseInt(p[1], 10) - 1];
+    r.dia = parseInt(p[2], 10);
+  }
+
+  raras.forEach(function (w) {
+    r.avisos.push('No reconozco "' + w + '"; si es un medico, agreguelo a la lista.');
+  });
+  return r;
+}
+/* ===PARSER-FIN=== */
+
+/* Los ejemplos son ayuda, no contenido: al tocar uno pasa a la caja y ahi se
+   ve lo que se va a interpretar, sin ambiguedad sobre que se escribira. */
+function usarEjemplo(btn) {
+  document.getElementById('frase').value = btn.textContent.trim();
+  document.getElementById('frase').focus();
+  var e = document.getElementById('frase-estado');
+  e.className = 'result-destino hidden';
+  e.textContent = '';
+}
+
+/* Rellena el formulario a partir de la frase. Devuelve si lo consiguio. */
+function usarFrase() {
+  var caja = document.getElementById('frase-estado');
+  var r = interpretarFrase(document.getElementById('frase').value, MEDICOS, new Date());
+  caja.className = 'result-destino';
+  if (r.error) { caja.textContent = '⚠️ ' + r.error; return false; }
+
+  var pon = function (id, val) { document.getElementById(id).value = val; };
+  pon('causa', r.causa);
+  onCausa();                                  /* muestra los campos del motivo */
+  pon('medA', r.a); pon('medB', r.b); pon('motivo', r.motivo);
+  pon('fecha1', r.f1); pon('fecha2', r.f2);
+  pon('horario1', r.h1); pon('horario2', r.h2);
+  pon('fecharef', r.fechaRef); pon('nota', r.nota);
+
+  /* generar() rellena mes y dia y borra el turno, asi que la celda se fija
+     despues: si la frase dijo "da" o "np", eso manda y no hay que deducirlo. */
+  generar();
+  pon('ap-mes', r.mes); pon('ap-dia', r.dia); pon('ap-turno', r.turno);
+  caja.textContent = (r.avisos.length ? '⚠️ ' + r.avisos.join(' ') + '\n' : '')
+                     + (document.getElementById('res1').textContent || '');
+  return true;
+}
+
+/* Un solo boton: interpreta y escribe. El turno, si no venia en la frase, lo
+   deduce solo; la confirmacion de siempre es la ultima revision antes de tocar
+   la planilla. */
+function fraseYEscribir() {
+  if (usarFrase()) aplicarEnCalendario();
+}
+
+
+/* Devuelve la ultima escritura a como estaba, celda por celda y con su nota y
+   su color. En un cambio de turno revierte las dos celdas. Antes de tocar nada
+   muestra que va a deshacer: el historial es del servicio, no de este telefono,
+   asi que lo ultimo puede no ser lo que usted escribio. */
+function deshacerUltimo() {
+  var btn = document.getElementById('btnDeshacer');
+  btn.disabled = true;
+  llamarApi('ver_historial', { cuantos: 1 }, function (r) {
+    btn.disabled = false;
+    if (/vacio/i.test(r)) { estado('No hay nada que deshacer.', false); return; }
+    if (!confirm('Se va a deshacer:\n\n' + r + '\n\nContinuar?')) {
+      estado('Cancelado. No se toco nada.', false);
+      return;
+    }
+    btn.disabled = true;
+    llamarApi('deshacer', {}, function (res) {
+      estado(res, false);
+      btn.disabled = false;
+    });
   });
 }
 
