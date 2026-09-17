@@ -125,6 +125,14 @@
     font-size:10px; color:var(--accent2); opacity:.8; margin-top:8px;
     text-transform:uppercase; letter-spacing:.6px;
   }
+  #ap-estado.ok, #ap-estado.error {
+    display:block; font-size:14px; text-transform:none; letter-spacing:0;
+    opacity:1; margin-top:10px; padding:10px 12px; border-radius:8px; font-weight:600;
+  }
+  #ap-estado.ok    { background:#1b5e20; color:#eaffea; }
+  #ap-estado.ok::before    { content:"✅ "; }
+  #ap-estado.error { background:#5c1a1a; color:#ffe2e2; }
+  #ap-estado.error::before { content:"⚠️ "; }
 
   .btn-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
   .btn {
@@ -774,16 +782,18 @@ function configurarApi() {
   estado('Configuracion guardada.', false);
 }
 
-function estado(msg, error) {
+function estado(msg, error, exito) {
   var el = document.getElementById('ap-estado');
   el.textContent = msg;
-  el.style.color = error ? '#c62828' : '';
+  el.classList.remove('ok', 'error');
+  if (exito) el.classList.add('ok');
+  else if (error) el.classList.add('error');
 }
 
-function llamarApi(herramienta, args, alTerminar) {
+function llamarApi(herramienta, args, alTerminar, reintentando) {
   var c = apiCfg();
   if (!c.token) { estado('Falta el token. Use "Configurar conexion".', true); return; }
-  estado('Conectando con el Mac...', false);
+  estado(reintentando ? 'Tailscale tardo en responder, reintentando...' : 'Conectando con el Mac...', false);
   fetch(c.url + '/' + herramienta, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Token': c.token },
@@ -795,7 +805,13 @@ function llamarApi(herramienta, args, alTerminar) {
     else estado(d.error || 'La operacion fallo.', true);
   })
   .catch(function (e) {
-    estado('Sin conexion con el Mac. Revise que Tailscale este activo. (' + e.message + ')', true);
+    // Un corte breve de Tailscale (el telefono se reconecta solo tras dormir)
+    // no debe obligar a tocar todo de nuevo: se reintenta una vez a los 3s.
+    if (!reintentando) {
+      setTimeout(function () { llamarApi(herramienta, args, alTerminar, true); }, 3000);
+    } else {
+      estado('Sin conexion con el Mac. Revise que Tailscale este activo en el iPhone. (' + e.message + ')', true);
+    }
   });
 }
 
@@ -914,7 +930,7 @@ function aplicarEnCalendario() {
 
   document.getElementById('btnAplicar').disabled = true;
   llamarApi('aplicar_turno', args, function (r) {
-    estado(r, false);
+    estado('Escrito en el Drive: ' + r, false, true);
     document.getElementById('btnAplicar').disabled = false;
   });
 }
