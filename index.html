@@ -133,6 +133,10 @@
   #ap-estado.ok::before    { content:"✅ "; }
   #ap-estado.error { background:#5c1a1a; color:#ffe2e2; }
   #ap-estado.error::before { content:"⚠️ "; }
+  #ap-estado.aviso { display:block; font-size:14px; text-transform:none; letter-spacing:0;
+    opacity:1; margin-top:10px; padding:10px 12px; border-radius:8px; font-weight:600;
+    background:#7a4a00; color:#fff3dc; }
+  #ap-estado.ok, #ap-estado.error, #ap-estado.aviso { white-space:pre-wrap; }
 
   .btn-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
   .btn {
@@ -208,6 +212,14 @@
   font: inherit; font-size:13px; line-height:1.45; cursor:pointer;
   background:rgba(127,127,127,.09); border:1px solid rgba(127,127,127,.22);
   border-radius:8px; color:inherit; }
+.reg-item { display:flex; gap:8px; align-items:flex-start; padding:9px 0;
+  border-bottom:1px solid var(--border); font-size:13px; line-height:1.4; }
+.reg-item:last-child { border-bottom:none; }
+.reg-item .reg-txt { flex:1; word-break:break-word; }
+.reg-item .reg-cuando { font-size:11px; color:var(--text2); }
+.reg-item.revertido .reg-txt { text-decoration:line-through; opacity:.55; }
+.reg-item button { flex-shrink:0; border:1.5px solid var(--border); background:var(--surface2);
+  color:var(--text); border-radius:8px; padding:6px 10px; font:inherit; font-size:12px; cursor:pointer; }
 .ejemplo:active { background:rgba(127,127,127,.2); }
 </style>
 </head>
@@ -230,6 +242,7 @@
               style="width:100%;box-sizing:border-box;"></textarea>
     <div class="regla" style="display:block;margin:6px 0 10px;">Una instrucción por vez.</div>
     <button class="btn" onclick="fraseYEscribir()" id="btnFrase">✍️ Interpretar y escribir</button>
+    <button class="btn btn-clear" onclick="limpiar()">🔄 Reiniciar todo</button>
     <div class="result-destino hidden" id="frase-estado"></div>
     <details style="margin-top:10px;">
       <summary style="cursor:pointer;font-size:13px;opacity:.75;">Ver un ejemplo de cada motivo — toque uno para usarlo</summary>
@@ -388,6 +401,13 @@
     <button class="link-btn" onclick="configurarApi()">Configurar conexión con el Mac</button>
   </div>
 
+  <!-- REGISTRO DE CAMBIOS -->
+  <div class="card" id="card-registro">
+    <div class="card-title"><span>🕘</span> Registro de cambios
+      <button class="link-btn" style="margin:0 0 0 auto;" onclick="cargarRegistro()">Actualizar</button></div>
+    <div id="registro"><div class="regla" style="display:block;">Toque "Actualizar" para ver los últimos cambios.</div></div>
+  </div>
+
   <!-- VISTA PREVIA DE LA NOTA -->
   <div class="card hidden" id="card-preview">
     <div class="card-title"><span>🗒</span> Así quedará la celda</div>
@@ -427,7 +447,7 @@
 
   <div class="btn-row">
     <button class="btn btn-generate" onclick="generar()">⚡ GENERAR</button>
-    <button class="btn btn-clear" onclick="limpiar()">🗑 LIMPIAR</button>
+    <button class="btn btn-clear" onclick="limpiar()">🔄 REINICIAR TODO</button>
   </div>
 
 </div>
@@ -493,6 +513,7 @@ function guardarMedicos() {
 
 /* Rehace ambos selectores conservando lo ya elegido si el médico sigue existiendo */
 function pintarMedicos() {
+  MEDICOS.sort(function(a, b) { return a.localeCompare(b, 'es'); });
   ['medA','medB'].forEach(function(id) {
     var sel = document.getElementById(id);
     var previo = sel.value;
@@ -726,15 +747,27 @@ function limpiarResultados() {
   document.getElementById('card-flujo').className = 'card hidden';
 }
 
+/* Deja la app como recién abierta (la lista de médicos y el token se conservan).
+   Las respuestas del Mac que lleguen después se ignoran gracias a `ronda`. */
 function limpiar() {
-  ['causa','medA','medB','nota','fecha1','fecha2','fecharef'].forEach(function(id) {
+  ronda++;
+  ['causa','medA','medB','nota','fecha1','fecha2','fecharef',
+   'frase','ap-mes','ap-dia','ap-turno'].forEach(function(id) {
     document.getElementById(id).value = '';
   });
   document.getElementById('motivo').value = 'LM';
   document.getElementById('horario1').value = 'D';
   document.getElementById('horario2').value = 'D';
+  var fe = document.getElementById('frase-estado');
+  fe.className = 'result-destino hidden';
+  fe.textContent = '';
+  estado('', false);
+  ['btnAplicar','btnDeshacer','btnFrase'].forEach(function(id) {
+    document.getElementById(id).disabled = false;
+  });
   onCausa();
-  toast('Limpiado');
+  window.scrollTo(0, 0);
+  toast('Todo reiniciado');
 }
 
 var _tt;
@@ -785,32 +818,61 @@ function configurarApi() {
 function estado(msg, error, exito) {
   var el = document.getElementById('ap-estado');
   el.textContent = msg;
-  el.classList.remove('ok', 'error');
+  el.classList.remove('ok', 'error', 'aviso');
   if (exito) el.classList.add('ok');
   else if (error) el.classList.add('error');
 }
 
-function llamarApi(herramienta, args, alTerminar, reintentando) {
+var ronda = 0;   // sube con "Reiniciar todo"
+
+/* alFallar(msg) es opcional: si devuelve true, el fallo ya se atendio. */
+function llamarApi(herramienta, args, alTerminar, alFallar, reintentando) {
   var c = apiCfg();
-  if (!c.token) { estado('Falta el token. Use "Configurar conexion".', true); return; }
-  estado(reintentando ? 'Tailscale tardo en responder, reintentando...' : 'Conectando con el Mac...', false);
+  var mia = ronda;
+  var fallo = function (msg) {
+    if (mia !== ronda) return;
+    if (alFallar && alFallar(msg)) return;
+    if (!calla) estado(msg, true);
+  };
+  if (!c.token) { fallo('Falta el token. Use "Configurar conexion".'); return; }
+  // Contador a la vista: se sabe que sigue trabajando y no se toca dos veces.
+  var t0 = Date.now(), base = reintentando ? 'Reintentando' : 'Conectando con el Mac';
+  // `silencio`: consultas de fondo (el registro) que no deben pisar el mensaje.
+  var calla = !!args.silencio;
+  if (calla) { args = Object.assign({}, args); delete args.silencio; }
+  var reloj = setInterval(function () {
+    if (mia === ronda && !calla) estado(base + '... ' + Math.round((Date.now() - t0) / 1000) + ' s', false);
+  }, 1000);
+  if (!calla) estado(base + '...', false);
+  // Sin limite, un Tailscale colgado dejaba la app esperando para siempre.
+  var corte = window.AbortController ? new AbortController() : null;
+  var limite = setTimeout(function () { if (corte) corte.abort(); }, 100000);
+  var fin = function () { clearInterval(reloj); clearTimeout(limite); };
   fetch(c.url + '/' + herramienta, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Token': c.token },
-    body: JSON.stringify(args)
+    body: JSON.stringify(args),
+    signal: corte ? corte.signal : undefined
   })
   .then(function (r) { return r.json(); })
   .then(function (d) {
+    fin();
+    if (mia !== ronda) return;
     if (d.ok) alTerminar(d.resultado);
-    else estado(d.error || 'La operacion fallo.', true);
+    else fallo(d.error || 'La operacion fallo.');
   })
   .catch(function (e) {
+    fin();
     // Un corte breve de Tailscale (el telefono se reconecta solo tras dormir)
     // no debe obligar a tocar todo de nuevo: se reintenta una vez a los 3s.
+    if (mia !== ronda) return;
     if (!reintentando) {
-      setTimeout(function () { llamarApi(herramienta, args, alTerminar, true); }, 3000);
+      setTimeout(function () {
+        if (mia === ronda) llamarApi(herramienta, calla ? Object.assign({ silencio: true }, args) : args,
+                                     alTerminar, alFallar, true);
+      }, 3000);
     } else {
-      estado('Sin conexion con el Mac. Revise que Tailscale este activo en el iPhone. (' + e.message + ')', true);
+      fallo('Sin conexion con el Mac. Revise que Tailscale este activo en el iPhone. (' + e.message + ')');
     }
   });
 }
@@ -928,10 +990,52 @@ function aplicarEnCalendario() {
   if (!confirm('Se escribira en ' + c.mes + ' ' + c.dia + ' (' + c.turno + '):\n\n'
                + resultado1 + '\n\nContinuar?')) return;
 
-  document.getElementById('btnAplicar').disabled = true;
+  escribirCelda(args, '');
+}
+
+/* El Mac se niega a escribir si la celda no tiene al médico esperado. En vez
+   de quedar ahí, se pregunta: continuar (escribe igual, con --forzar) o revisar.
+   Si se continúa, la advertencia queda a la vista junto al resultado. */
+function escribirCelda(args, advertencia) {
+  var btn = document.getElementById('btnAplicar');
+  btn.disabled = true;
   llamarApi('aplicar_turno', args, function (r) {
-    estado('Escrito en el Drive: ' + r, false, true);
-    document.getElementById('btnAplicar').disabled = false;
+    btn.disabled = false;
+    if (advertencia) {
+      estado('ADVERTENCIA: ' + advertencia + '\n\nEscrito en el Drive: ' + r, false);
+      document.getElementById('ap-estado').classList.add('aviso');
+      document.getElementById('ap-estado').scrollIntoView({ block: 'center' });
+    } else {
+      estado('Escrito en el Drive: ' + r, false, true);
+    }
+    cargarRegistro();
+  }, function (err) {
+    btn.disabled = false;
+    var m = /La celda no contiene a ([^.]+)\./.exec(err || '');
+    if (!m || args.forzar) return false;
+    var a = /Celda actual\s*:\s*(['"])(.*?)\1/.exec(err);
+    // Si la conexion se corto despues de escribir, el reintento llega a una
+    // celda que ya tiene lo pedido: no es un conflicto, ya esta hecho.
+    var nuevo = args.causa === 'VAC' ? 'VACANTE' : (args.a || '').toUpperCase();
+    if (a && nuevo && a[2].toUpperCase().indexOf(nuevo) >= 0) {
+      estado('La celda ya tiene a ' + a[2] + ': el cambio sí quedó escrito. ' +
+             'Revíselo en el Registro de cambios.', false, true);
+      cargarRegistro();
+      return true;
+    }
+    var hay = a && a[2] ? '"' + a[2] + '"' : 'la celda vacía';
+    var donde = args.mes + ' ' + args.dia + ' (' + args.turno + ')';
+    if (confirm('⚠️ ADVERTENCIA\n\nEn ' + donde + ' hay ' + hay + ', no ' + m[1] +
+                ' como usted indicó.\n\nAceptar = continuar y escribir igual\n' +
+                'Cancelar = revisar')) {
+      escribirCelda(Object.assign({}, args, { forzar: true }),
+                    'En ' + donde + ' había ' + hay + ' en vez de ' + m[1] +
+                    '. Se sobrescribió por indicación suya.');
+    } else {
+      estado('No se escribió nada. En ' + donde + ' hay ' + hay + ', no ' + m[1] +
+             '. Revise el mes, el día, el turno o los médicos.', true);
+    }
+    return true;
   });
 }
 
@@ -1178,18 +1282,71 @@ function fraseYEscribir() {
 function deshacerUltimo() {
   var btn = document.getElementById('btnDeshacer');
   btn.disabled = true;
-  llamarApi('ver_historial', { cuantos: 1 }, function (r) {
+  llamarApi('ver_historial', { cuantos: 30, json: true }, function (lista) {
     btn.disabled = false;
-    if (/vacio/i.test(r)) { estado('No hay nada que deshacer.', false); return; }
-    if (!confirm('Se va a deshacer:\n\n' + r + '\n\nContinuar?')) {
-      estado('Cancelado. No se toco nada.', false);
-      return;
+    pintarRegistro(lista);
+    var vig = lista.filter(function (c) { return !c.revertido; })[0];
+    if (!vig) { estado('No hay nada que deshacer.', false); return; }
+    revertirCambio(vig);
+  }, function () { btn.disabled = false; return false; });
+}
+
+/* Registro de lo escrito en el calendario (vive en el Mac, es del servicio).
+   Cada cambio vigente se puede revertir por separado. */
+var registro = [];
+
+function cargarRegistro() {
+  if (!apiCfg().token) return;
+  llamarApi('ver_historial', { cuantos: 30, json: true, silencio: true }, pintarRegistro);
+}
+
+function pintarRegistro(lista) {
+  registro = lista || [];
+  var cont = document.getElementById('registro');
+  if (!registro.length) {
+    cont.innerHTML = '<div class="regla" style="display:block;">Sin cambios registrados.</div>';
+    return;
+  }
+  cont.innerHTML = '';
+  registro.forEach(function (c) {
+    var fila = document.createElement('div');
+    fila.className = 'reg-item' + (c.revertido ? ' revertido' : '');
+    var txt = document.createElement('div');
+    txt.className = 'reg-txt';
+    txt.textContent = c.descripcion;
+    var cu = document.createElement('div');
+    cu.className = 'reg-cuando';
+    cu.textContent = c.cuando.replace('T', ' ') + ' · ' + c.celdas.join(', ') +
+                     (c.revertido ? ' · revertido ' + c.revertido.replace('T', ' ') : '');
+    txt.appendChild(cu);
+    fila.appendChild(txt);
+    if (!c.revertido) {
+      var b = document.createElement('button');
+      b.textContent = '↩️ Revertir';
+      b.onclick = function () { revertirCambio(c); };
+      fila.appendChild(b);
     }
-    btn.disabled = true;
-    llamarApi('deshacer', {}, function (res) {
-      estado(res, false);
-      btn.disabled = false;
-    });
+    cont.appendChild(fila);
+  });
+}
+
+function revertirCambio(c, forzar) {
+  if (!forzar && !confirm('Se va a revertir:\n\n' + c.descripcion + '\n(' + c.cuando.replace('T', ' ') +
+                          ')\n\nLa celda vuelve a como estaba antes. ¿Continuar?')) {
+    estado('Cancelado. No se tocó nada.', false);
+    return;
+  }
+  llamarApi('deshacer', { id: c.id, forzar: !!forzar }, function (res) {
+    estado(res, false, true);
+    cargarRegistro();
+  }, function (err) {
+    if (!forzar && /CONFLICTO/.test(err || '')) {
+      if (confirm('⚠️ ' + err.replace(/^\w+Error: /, '') + '\n\nAceptar = revertir igual (se pierde lo editado después)\n' +
+                  'Cancelar = dejarlo como está')) revertirCambio(c, true);
+      else estado('No se revirtió nada.', false);
+      return true;
+    }
+    return false;
   });
 }
 
@@ -1197,6 +1354,7 @@ function deshacerUltimo() {
   var sel = document.getElementById('ap-mes');
   sel.innerHTML = '<option value="">— elegir —</option>' +
     MESES_NOM.map(function (m) { return '<option value="' + m + '">' + m + '</option>'; }).join('');
+  cargarRegistro();
 })();
 </script>
 </body>
