@@ -238,9 +238,9 @@
   <!-- FRASE -->
   <div class="card">
     <div class="card-title"><span>⚡</span> Escríbalo tal cual</div>
-    <textarea id="frase" rows="2" placeholder="Ej: machado cubre licencia de polanco 3/5 da"
+    <textarea id="frase" rows="2" placeholder="Escríbalo como le salga. Ej: polanco está con licencia el martes, lo cubre machado en la noche de adultos"
               style="width:100%;box-sizing:border-box;"></textarea>
-    <div class="regla" style="display:block;margin:6px 0 10px;">Una instrucción por vez.</div>
+    <div class="regla" style="display:block;margin:6px 0 10px;">Una instrucción por vez. La interpreta una IA (~10 s) y usted confirma antes de escribir.</div>
     <button class="btn" onclick="fraseYEscribir()" id="btnFrase">✍️ Interpretar y escribir</button>
     <button class="btn btn-clear" onclick="limpiar()">🔄 Reiniciar todo</button>
     <div class="result-destino hidden" id="frase-estado"></div>
@@ -1249,7 +1249,14 @@ function usarFrase() {
   var r = interpretarFrase(document.getElementById('frase').value, MEDICOS, new Date());
   caja.className = 'result-destino';
   if (r.error) { caja.textContent = '⚠️ ' + r.error; return false; }
+  rellenar(r, '');
+  return true;
+}
 
+/* Vuelca una interpretacion (del interprete rapido o de la IA) al formulario. */
+function rellenar(r, origen) {
+  var caja = document.getElementById('frase-estado');
+  caja.className = 'result-destino';
   var pon = function (id, val) { document.getElementById(id).value = val; };
   pon('causa', r.causa);
   onCausa();                                  /* muestra los campos del motivo */
@@ -1262,16 +1269,59 @@ function usarFrase() {
      despues: si la frase dijo "da" o "np", eso manda y no hay que deducirlo. */
   generar();
   pon('ap-mes', r.mes); pon('ap-dia', r.dia); pon('ap-turno', r.turno);
-  caja.textContent = (r.avisos.length ? '⚠️ ' + r.avisos.join(' ') + '\n' : '')
+  caja.textContent = origen + (r.avisos.length ? '⚠️ ' + r.avisos.join(' ') + '\n' : '')
                      + (document.getElementById('res1').textContent || '');
-  return true;
 }
 
 /* Un solo boton: interpreta y escribe. El turno, si no venia en la frase, lo
    deduce solo; la confirmacion de siempre es la ultima revision antes de tocar
    la planilla. */
 function fraseYEscribir() {
-  if (usarFrase()) aplicarEnCalendario();
+  var texto = document.getElementById('frase').value;
+  var lineas = texto.split('\n').filter(function (l) { return l.trim(); });
+  // Sin conexion o con varias lineas: el interprete rapido responde (y avisa).
+  if (!apiCfg().token || lineas.length !== 1) {
+    if (usarFrase()) aplicarEnCalendario();
+    return;
+  }
+  /* La IA (Codex, cuenta de ChatGPT, en el Mac) entiende la frase escrita
+     como salga. La app comprueba lo que devuelve y la confirmacion de siempre
+     muestra el texto exacto antes de tocar la planilla. Si la IA falla, se usa
+     el interprete rapido de siempre. */
+  var caja = document.getElementById('frase-estado');
+  var btn = document.getElementById('btnFrase');
+  caja.className = 'result-destino';
+  caja.textContent = '🤖 Interpretando con IA...';
+  btn.disabled = true;
+  var d = new Date();
+  var hoy = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  llamarApi('interpretar_ia', { texto: texto, medicos: MEDICOS, hoy: hoy }, function (ia) {
+    btn.disabled = false;
+    estado('', false);
+    if (ia.duda) { caja.textContent = '🤖 ⚠️ ' + ia.duda + '\nAgregue ese dato a la frase y vuelva a tocar.'; return; }
+    var fuera = [ia.a, ia.b].filter(function (n) { return n && MEDICOS.indexOf(n) < 0; });
+    if (fuera.length) {
+      caja.textContent = '🤖 ⚠️ ' + fuera.join(', ') + ' no está en la lista de médicos. ' +
+                         'Agréguelo en "Editar lista de médicos" y vuelva a tocar.';
+      return;
+    }
+    var f = ia.causa === 'C' ? ia.f1 : ia.fecha;
+    if (!f) { caja.textContent = '🤖 ⚠️ Falta la fecha del turno.'; return; }
+    var p = f.split('-');
+    rellenar({ causa: ia.causa, a: ia.a, b: ia.b, motivo: ia.motivo, f1: ia.f1, f2: ia.f2,
+               h1: ia.h1, h2: ia.h2, fechaRef: ia.causa === 'C' ? '' : ia.fecha, nota: ia.nota,
+               mes: MESES_NOM[parseInt(p[1], 10) - 1], dia: parseInt(p[2], 10),
+               turno: ia.turno, avisos: [] }, '🤖 ');
+    aplicarEnCalendario();
+  }, function (err) {
+    btn.disabled = false;
+    if (usarFrase()) {
+      caja.textContent = '⚡ IA no disponible (' + String(err).replace(/^\w+Error: /, '').slice(0, 80) +
+                         '); usé el intérprete rápido.\n' + caja.textContent;
+      aplicarEnCalendario();
+    }
+    return true;
+  });
 }
 
 
