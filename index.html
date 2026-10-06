@@ -404,7 +404,8 @@
   <!-- REGISTRO DE CAMBIOS -->
   <div class="card" id="card-registro">
     <div class="card-title"><span>🕘</span> Registro de cambios
-      <button class="link-btn" style="margin:0 0 0 auto;" onclick="cargarRegistro()">Actualizar</button></div>
+      <button class="link-btn" style="margin:0 0 0 auto;" onclick="cargarRegistro(true)">🔄 Actualizar</button></div>
+    <div class="regla" style="display:block;margin-bottom:8px;" id="reg-estado">Cada registro se borra solo 3 días después de la fecha del turno.</div>
     <div id="registro"><div class="regla" style="display:block;">Toque "Actualizar" para ver los últimos cambios.</div></div>
   </div>
 
@@ -1345,9 +1346,34 @@ function deshacerUltimo() {
    Cada cambio vigente se puede revertir por separado. */
 var registro = [];
 
-function cargarRegistro() {
-  if (!apiCfg().token) return;
-  llamarApi('ver_historial', { cuantos: 30, json: true, silencio: true }, pintarRegistro);
+/* aMano: tocado desde "Actualizar", asi que se informa que paso. */
+function cargarRegistro(aMano) {
+  var aviso = document.getElementById('reg-estado');
+  if (!apiCfg().token) {
+    if (aMano) aviso.textContent = '⚠️ Falta el token: use "Configurar conexión con el Mac".';
+    return;
+  }
+  if (aMano) aviso.textContent = 'Actualizando...';
+  llamarApi('ver_historial', { cuantos: 30, json: true, silencio: true }, function (lista) {
+    pintarRegistro(lista);
+    var d = new Date();
+    aviso.textContent = 'Actualizado a las ' + d.toTimeString().slice(0, 5) + ' · ' +
+      lista.length + ' registro(s). Cada uno se borra solo 3 días después de la fecha del turno.';
+  }, function (err) {
+    if (aMano) aviso.textContent = '⚠️ No se pudo actualizar: ' + String(err).replace(/^\w+Error: /, '');
+    return true;
+  });
+}
+
+function borrarRegistro(c) {
+  if (!confirm('Se quita del registro:\n\n' + c.descripcion + '\n\nLa planilla NO cambia, pero ' +
+               'ya no se podrá revertir desde la app. ¿Continuar?')) return;
+  llamarApi('borrar_registro', { id: c.id, silencio: true }, function () {
+    cargarRegistro(true);
+  }, function (err) {
+    document.getElementById('reg-estado').textContent = '⚠️ ' + String(err).replace(/^\w+Error: /, '');
+    return true;
+  });
 }
 
 function pintarRegistro(lista) {
@@ -1376,6 +1402,11 @@ function pintarRegistro(lista) {
       b.onclick = function () { revertirCambio(c); };
       fila.appendChild(b);
     }
+    var x = document.createElement('button');
+    x.textContent = '🗑';
+    x.title = 'Borrar del registro';
+    x.onclick = function () { borrarRegistro(c); };
+    fila.appendChild(x);
     cont.appendChild(fila);
   });
 }
