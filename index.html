@@ -1438,5 +1438,27 @@ function revertirCambio(c, forzar) {
   cargarRegistro();
 })();
 </script>
+<!--AYUDA-INTEGRADA-->
+<style>
+#ayi-btn{position:fixed;left:14px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:2147483000;width:38px;height:38px;border-radius:50%;border:0;background:#1f6feb;color:#fff;font:700 19px -apple-system,system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.35);cursor:pointer;opacity:.9}
+#ayi-fondo{position:fixed;inset:0;z-index:2147483001;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:14px}
+#ayi-fondo[hidden]{display:none}
+#ayi-caja{background:#fff;color:#1b2430;max-width:640px;width:100%;max-height:calc(100vh - 28px);overflow:auto;-webkit-overflow-scrolling:touch;border-radius:16px;padding:20px 22px;font:15px/1.45 -apple-system,system-ui,sans-serif;text-align:left;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+#ayi-caja h2{margin:0 0 6px;font-size:20px} #ayi-caja h3{margin:14px 0 2px;font-size:15.5px} #ayi-caja p{margin:0;color:#4a5566}
+#ayi-caja table{border-spacing:0 3px} #ayi-caja td{padding-right:14px;vertical-align:top}
+#ayi-cerrar{display:block;margin:16px auto 0;padding:9px 28px;border:0;border-radius:10px;background:#1f6feb;color:#fff;font:600 15px -apple-system,system-ui,sans-serif;cursor:pointer}
+@media (prefers-color-scheme:dark){#ayi-caja{background:#1d232b;color:#e6ebf2} #ayi-caja p{color:#a9b4c2}}
+</style>
+<button id="ayi-btn" type="button" title="Ayuda (tecla ?)" aria-label="Ayuda">?</button>
+<div id="ayi-fondo" hidden role="dialog" aria-label="Ayuda"><div id="ayi-caja">
+<h2>Ayuda: Reemplazos UE</h2><p>Escribe los cambios de turno del Servicio de Urgencias en el calendario de Google Sheets, desde el iPhone o el Mac.</p><h3>1. Escríbalo tal cual</h3><p>Escriba una instrucción, por ejemplo «machado cubre licencia de polanco 3/5 da», y pulse <b>Interpretar y escribir</b>. Una IA la interpreta en unos 10 segundos y usted confirma antes de que se escriba. Toque un ejemplo de la lista para usarlo como modelo.</p><h3>2. Formulario manual</h3><p>Si prefiere no escribir la frase: elija el <b>motivo</b> (cambio de turno, feriado legal, licencia, fuero maternal, permiso sin goce, vacante, renuncia o nota), los médicos, las fechas y el horario (D diurno, N nocturno) y pulse <b>GENERAR</b>. «Editar lista de médicos» agrega o restaura nombres.</p><h3>3. Resultados</h3><p><b>Resultado 1</b> es la nota para la celda del turno; <b>Resultado 2</b>, la de la otra celda en un cambio de turno. Cada uno tiene su botón para copiar.</p><h3>4. Celda del calendario</h3><p>Se completa sola con la frase. <b>Deducir el turno</b> busca al titular en el calendario, <b>Ver qué hay ahora</b> muestra la celda actual, <b>Escribir</b> la guarda en el Sheets (en morado, con la nota) y <b>Deshacer lo último</b> revierte el último cambio. Requiere la conexión con el Mac (botón «Configurar conexión con el Mac»).</p><h3>5. Registro de cambios</h3><p>Lista lo escrito recientemente; <b>Actualizar</b> lo refresca. Cada registro se borra solo 3 días después de la fecha del turno.</p><h3>Otros botones</h3><p>🌙 cambia a modo oscuro; <b>Reiniciar todo</b> limpia el formulario.</p>
+<button id="ayi-cerrar" type="button">Cerrar</button></div></div>
+<script>(function(){var f=document.getElementById('ayi-fondo');function a(){f.hidden=false}function c(){f.hidden=true}
+document.getElementById('ayi-btn').onclick=a;document.getElementById('ayi-cerrar').onclick=c;
+f.addEventListener('click',function(e){if(e.target===f)c()});
+document.addEventListener('keydown',function(e){var g=(document.activeElement||{}).tagName||'';
+if(e.key==='Escape'&&!f.hidden)c();else if(e.key==='?'&&!/INPUT|TEXTAREA|SELECT/.test(g)&&!(document.activeElement||{}).isContentEditable)a()});
+window.abrirAyuda=a;})();</script>
+<!--/AYUDA-INTEGRADA-->
 </body>
 </html>
