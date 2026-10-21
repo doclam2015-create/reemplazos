@@ -901,7 +901,7 @@ function autocompletarCelda() {
     return;
   }
   var p = iso.split('-');
-  document.getElementById('ap-mes').value = MESES_NOM[parseInt(p[1], 10) - 1];
+  document.getElementById('ap-mes').value = MESES_NOM[parseInt(p[1], 10) - 1] + ' ' + p[0];
   document.getElementById('ap-dia').value = parseInt(p[2], 10);
   document.getElementById('ap-turno').value = '';
 
@@ -1223,7 +1223,7 @@ function interpretarFrase(texto, medicos, hoy) {
   var celda = r.f1 || r.fechaRef || fechas[0] || '';
   if (celda) {
     var p = celda.split('-');
-    r.mes = MESES_NOM[parseInt(p[1], 10) - 1];
+    r.mes = MESES_NOM[parseInt(p[1], 10) - 1] + ' ' + p[0];
     r.dia = parseInt(p[2], 10);
   }
 
@@ -1311,7 +1311,7 @@ function fraseYEscribir() {
     var p = f.split('-');
     rellenar({ causa: ia.causa, a: ia.a, b: ia.b, motivo: ia.motivo, f1: ia.f1, f2: ia.f2,
                h1: ia.h1, h2: ia.h2, fechaRef: ia.causa === 'C' ? '' : ia.fecha, nota: ia.nota,
-               mes: MESES_NOM[parseInt(p[1], 10) - 1], dia: parseInt(p[2], 10),
+               mes: MESES_NOM[parseInt(p[1], 10) - 1] + ' ' + p[0], dia: parseInt(p[2], 10),
                turno: ia.turno, avisos: [] }, '🤖 ');
     aplicarEnCalendario();
   }, function (err) {
@@ -1434,7 +1434,9 @@ function revertirCambio(c, forzar) {
 (function iniciarAplicar() {
   var sel = document.getElementById('ap-mes');
   sel.innerHTML = '<option value="">— elegir —</option>' +
-    MESES_NOM.map(function (m) { return '<option value="' + m + '">' + m + '</option>'; }).join('');
+    [2026, 2027].map(function (a) {   // un calendario de Drive por año
+      return MESES_NOM.map(function (m) { var v = m + ' ' + a; return '<option value="' + v + '">' + v + '</option>'; }).join('');
+    }).join('');
   cargarRegistro();
 })();
 </script>
